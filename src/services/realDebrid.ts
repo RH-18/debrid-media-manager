@@ -16,6 +16,8 @@ import {
 
 const { publicRuntimeConfig: config } = getConfig();
 
+const REAL_DEBRID_PROXY_BASE = '/api/realdebrid-proxy';
+
 // Constants for timeout and retry
 const REQUEST_TIMEOUT = 10000; // Increased from 5s to 10s
 const TORRENT_REQUEST_TIMEOUT = 30000; // Increased from 15s to 30s
@@ -58,9 +60,14 @@ function getUniqueRequestId() {
 	return `req-${Date.now()}-${requestCount++}`;
 }
 
-// Function to replace #num# with random number 0-9
-function getProxyUrl(baseUrl: string): string {
-	return baseUrl.replace('#num#', Math.floor(Math.random() * 10).toString());
+// Helper to build the Real-Debrid URL, using the proxy for browser requests
+function buildRealDebridUrl(path: string, { bare = false }: { bare?: boolean } = {}): string {
+	const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+	if (bare) {
+		return `${config.realDebridHostname}${normalizedPath}`;
+	}
+
+	return `${REAL_DEBRID_PROXY_BASE}${normalizedPath}`;
 }
 
 // Validate SHA40 hash format
@@ -338,7 +345,7 @@ genericAxios.interceptors.response.use(
 
 export const getDeviceCode = async () => {
 	try {
-		const url = `${getProxyUrl(config.proxy)}${config.realDebridHostname}/oauth/v2/device/code?client_id=${config.realDebridClientId}&new_credentials=yes`;
+		const url = `${buildRealDebridUrl('/oauth/v2/device/code')}?client_id=${config.realDebridClientId}&new_credentials=yes`;
 		const response = await genericAxios.get<DeviceCodeResponse>(url);
 		return response.data;
 	} catch (error: any) {
@@ -349,7 +356,7 @@ export const getDeviceCode = async () => {
 
 export const getCredentials = async (deviceCode: string) => {
 	try {
-		const url = `${getProxyUrl(config.proxy)}${config.realDebridHostname}/oauth/v2/device/credentials?client_id=${config.realDebridClientId}&code=${deviceCode}`;
+		const url = `${buildRealDebridUrl('/oauth/v2/device/credentials')}?client_id=${config.realDebridClientId}&code=${deviceCode}`;
 		const response = await genericAxios.get<CredentialsResponse>(url);
 		return response.data;
 	} catch (error: any) {
@@ -372,7 +379,7 @@ export const getToken = async (
 		params.append('grant_type', 'http://oauth.net/grant_type/device/1.0');
 
 		const response = await genericAxios.post<AccessTokenResponse>(
-			`${bare ? 'https://app.real-debrid.com' : getProxyUrl(config.proxy) + config.realDebridHostname}/oauth/v2/token`,
+			buildRealDebridUrl('/oauth/v2/token', { bare }),
 			params.toString(),
 			{
 				headers: {
@@ -406,7 +413,7 @@ export const getCurrentUser = async (accessToken: string) => {
 	const promise = (async () => {
 		try {
 			const response = await realDebridAxios.get<UserResponse>(
-				`${getProxyUrl(config.proxy)}${config.realDebridHostname}/rest/1.0/user`,
+				buildRealDebridUrl('/rest/1.0/user'),
 				{
 					headers: {
 						Authorization: `Bearer ${accessToken}`,
@@ -439,7 +446,9 @@ export async function getUserTorrentsList(
 		const cacheParam = page === 1 ? `&_fresh=${Date.now()}` : '';
 
 		const response = await realDebridAxios.get<UserTorrentResponse[]>(
-			`${bare ? 'https://app.real-debrid.com' : getProxyUrl(config.proxy) + config.realDebridHostname}/rest/1.0/torrents?page=${page}&limit=${limit}${cacheParam}`,
+			buildRealDebridUrl(`/rest/1.0/torrents?page=${page}&limit=${limit}${cacheParam}`, {
+				bare,
+			}),
 			{
 				headers: {
 					Authorization: `Bearer ${accessToken}`,
@@ -476,7 +485,7 @@ export const getTorrentInfo = async (
 ): Promise<TorrentInfoResponse> => {
 	try {
 		const response = await realDebridAxios.get<TorrentInfoResponse>(
-			`${bare ? 'https://app.real-debrid.com' : getProxyUrl(config.proxy) + config.realDebridHostname}/rest/1.0/torrents/info/${id}`,
+			buildRealDebridUrl(`/rest/1.0/torrents/info/${id}`, { bare }),
 			{
 				headers: {
 					Authorization: `Bearer ${accessToken}`,
@@ -503,7 +512,7 @@ export const rdInstantCheck = async (
 		}
 
 		const response = await realDebridAxios.get<RdInstantAvailabilityResponse>(
-			`${getProxyUrl(config.proxy)}${config.realDebridHostname}/rest/1.0/torrents/instantAvailability/${validHashes.join('/')}`,
+			buildRealDebridUrl(`/rest/1.0/torrents/instantAvailability/${validHashes.join('/')}`),
 			{
 				headers: {
 					Authorization: `Bearer ${accessToken}`,
@@ -524,7 +533,7 @@ export const addMagnet = async (
 ): Promise<string> => {
 	try {
 		const response = await realDebridAxios.post<AddMagnetResponse>(
-			`${bare ? 'https://app.real-debrid.com' : getProxyUrl(config.proxy) + config.realDebridHostname}/rest/1.0/torrents/addMagnet`,
+			buildRealDebridUrl('/rest/1.0/torrents/addMagnet', { bare }),
 			qs.stringify({ magnet }),
 			{
 				headers: {
@@ -564,7 +573,7 @@ export const selectFiles = async (
 ): Promise<void> => {
 	try {
 		const response = await realDebridAxios.post(
-			`${bare ? 'https://app.real-debrid.com' : getProxyUrl(config.proxy) + config.realDebridHostname}/rest/1.0/torrents/selectFiles/${id}`,
+			buildRealDebridUrl(`/rest/1.0/torrents/selectFiles/${id}`, { bare }),
 			qs.stringify({ files: files.join(',') }),
 			{
 				headers: {
@@ -586,7 +595,7 @@ export const deleteTorrent = async (
 ): Promise<void> => {
 	try {
 		await realDebridAxios.delete(
-			`${bare ? 'https://app.real-debrid.com' : getProxyUrl(config.proxy) + config.realDebridHostname}/rest/1.0/torrents/delete/${id}`,
+			buildRealDebridUrl(`/rest/1.0/torrents/delete/${id}`, { bare }),
 			{
 				headers: {
 					Authorization: `Bearer ${accessToken}`,
@@ -601,14 +610,11 @@ export const deleteTorrent = async (
 
 export const deleteDownload = async (accessToken: string, id: string): Promise<void> => {
 	try {
-		await realDebridAxios.delete(
-			`${getProxyUrl(config.proxy)}${config.realDebridHostname}/rest/1.0/downloads/delete/${id}`,
-			{
-				headers: {
-					Authorization: `Bearer ${accessToken}`,
-				},
-			}
-		);
+		await realDebridAxios.delete(buildRealDebridUrl(`/rest/1.0/downloads/delete/${id}`), {
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+			},
+		});
 	} catch (error: any) {
 		console.error('Error deleting download:', error.message);
 		throw error;
@@ -635,7 +641,7 @@ export const unrestrictLink = async (
 		params.append('link', link);
 
 		const response = await realDebridAxios.post<UnrestrictResponse>(
-			`${bare ? 'https://app.real-debrid.com' : getProxyUrl(config.proxy) + config.realDebridHostname}/rest/1.0/unrestrict/link`,
+			buildRealDebridUrl('/rest/1.0/unrestrict/link', { bare }),
 			params.toString(),
 			{
 				headers: {
@@ -688,7 +694,7 @@ export const getTimeISO = async (): Promise<string> => {
 	const promise = (async () => {
 		try {
 			const response = await genericAxios.get<string>(
-				`${getProxyUrl(config.proxy)}${config.realDebridHostname}/rest/1.0/time/iso`
+				buildRealDebridUrl('/rest/1.0/time/iso')
 			);
 			return response.data;
 		} catch (error: any) {
